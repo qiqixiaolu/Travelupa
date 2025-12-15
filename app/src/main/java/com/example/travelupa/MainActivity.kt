@@ -50,10 +50,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.input.TextFieldValue // Import ini diperlukan untuk kode selanjutnya
 
-// --- SEALEAD CLASS NAVIGASI ---
+
+// --- SEALEAD CLASS NAVIGASI (DITAMBAH GREETING) ---
 sealed class Screen(val route: String) {
+    object Greeting : Screen("greeting") // Rute baru
     object Login : Screen("login")
     object Register : Screen("register")
     object RekomendasiTempat : Screen("rekomendasi_tempat")
@@ -67,7 +68,7 @@ data class TempatWisata(
     val gambarResId: Int? = null
 )
 
-// --- DATA STATIS DARI BAB 3 (DIKEMBALIKAN) ---
+// --- DATA STATIS DARI BAB 3 ---
 val daftarTempatWisataStatis = listOf(
     TempatWisata(
         "Tumpak Sewu",
@@ -81,15 +82,67 @@ val daftarTempatWisataStatis = listOf(
     )
 )
 
-// --- Composable: App Navigation ---
+// --- Composable: Greeting Screen (BARU) ---
+@Composable
+fun GreetingScreen(
+    onStart: () -> Unit
+) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Selamat Datang di Travelupa!",
+                style = MaterialTheme.typography.h4,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Solusi buat kamu yang lupa kemana-mana",
+                style = MaterialTheme.typography.h6
+            )
+        }
+        Button(
+            onClick = onStart, // Memicu navigasi ke Login
+            modifier = Modifier
+                .width(360.dp)
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 16.dp)
+        ) {
+            Text(text = "Mulai")
+        }
+    }
+}
+
+
+// --- Composable: App Navigation (UPDATE startDestination dan Greeting) ---
 @Composable
 fun AppNavigation(currentUser: FirebaseUser?) {
     val navController = rememberNavController()
 
     NavHost(
         navController = navController,
-        startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Login.route
+        startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Greeting.route // Perubahan di sini
     ) {
+        // Rute: Greeting Screen
+        composable(Screen.Greeting.route) {
+            GreetingScreen(
+                onStart = {
+                    navController.navigate(Screen.Login.route) {
+                        // Hapus Greeting dari back stack
+                        popUpTo(Screen.Greeting.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // Rute: Login Screen
         composable(Screen.Login.route) {
             LoginScreen(
                 onLoginSuccess = {
@@ -103,6 +156,7 @@ fun AppNavigation(currentUser: FirebaseUser?) {
             )
         }
 
+        // Rute: Register Screen
         composable(Screen.Register.route) {
             RegisterScreen(
                 onRegisterSuccess = {
@@ -116,11 +170,19 @@ fun AppNavigation(currentUser: FirebaseUser?) {
             )
         }
 
+        // Rute: Rekomendasi Tempat Screen
         composable(Screen.RekomendasiTempat.route) {
             RekomendasiTempatScreen(
                 onBackToLogin = {
                     FirebaseAuth.getInstance().signOut()
                     navController.navigate(Screen.Login.route) {
+                        // Perubahan: Kembali ke Login, bukan Greeting (Bab 7 module menyarankan kembali ke Greeting)
+                        // Mengikuti flow umum:
+                        // navController.navigate(Screen.Greeting.route) {
+                        // popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
+                        // }
+
+                        // Mengikuti flow kode Anda sebelumnya (kembali ke Login)
                         popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
                     }
                 }
@@ -349,28 +411,24 @@ fun LoginScreen(
     }
 }
 
-// --- Composable: Rekomendasi Tempat Screen (MEMPERBAIKI DAN MENGGABUNGKAN DATA) ---
+// --- Composable: Rekomendasi Tempat Screen ---
 @Composable
 fun RekomendasiTempatScreen(
     onBackToLogin: () -> Unit
 ) {
-    // State untuk menampung data dari Firestore
     var daftarTempatWisataFirestore by remember { mutableStateOf(listOf<TempatWisata>()) }
     var showTambahDialog by remember { mutableStateOf(false) }
 
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
 
-    // Data akhir yang ditampilkan: Statis + Firestore (menghilangkan duplikasi)
     val daftarTempatWisataGabungan = remember(daftarTempatWisataFirestore) {
         val firestoreNames = daftarTempatWisataFirestore.map { it.nama }.toSet()
         val uniqueStatis = daftarTempatWisataStatis.filter { it.nama !in firestoreNames }
 
-        // Gabungkan Statis (di atas) + Firestore
         uniqueStatis + daftarTempatWisataFirestore
     }
 
-    // Fungsi fetch data dari Firestore
     val fetchData: () -> Unit = {
         firestore.collection("tempat_wisata")
             .get()
@@ -385,7 +443,6 @@ fun RekomendasiTempatScreen(
             }
     }
 
-    // Panggil fetchData saat composable pertama kali dimasukkan ke komposisi atau saat fungsi di-recompose
     LaunchedEffect(Unit) {
         fetchData()
     }
@@ -420,7 +477,6 @@ fun RekomendasiTempatScreen(
                     TempatItemEditable(
                         tempat = tempat,
                         onDelete = {
-                            // Panggil ulang fetchData untuk merefresh daftar setelah penghapusan
                             fetchData()
                         }
                     )
@@ -434,7 +490,6 @@ fun RekomendasiTempatScreen(
                 context = context,
                 onDismiss = { showTambahDialog = false },
                 onTambah = { nama, deskripsi, gambarUriString ->
-                    // Setelah penambahan berhasil di Firestore, muat ulang data.
                     fetchData()
                     showTambahDialog = false
                 }
@@ -443,7 +498,7 @@ fun RekomendasiTempatScreen(
     }
 }
 
-// --- Composable: Item Daftar yang Dapat Diedit/Dihapus (MEMPERBAIKI DEFAULT IMAGE) ---
+// --- Composable: Item Daftar yang Dapat Diedit/Dihapus ---
 @Composable
 fun TempatItemEditable(
     tempat: TempatWisata,
@@ -451,7 +506,6 @@ fun TempatItemEditable(
 ) {
     val firestore = FirebaseFirestore.getInstance()
     var expanded by remember { mutableStateOf(false) }
-    // DEFAULT IMAGE SESUAI DENGAN MODUL [cite: 539, 1158]
     val defaultImage = R.drawable.default_image
 
     Card(
@@ -461,19 +515,16 @@ fun TempatItemEditable(
         elevation = 4.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Image Display Logic
             Image(
                 painter = tempat.gambarUriString?.let { uriString ->
-                    // Jika ada URI String (dari Firebase/Gallery), gunakan Coil
                     rememberAsyncImagePainter(
                         ImageRequest.Builder(LocalContext.current)
                             .data(Uri.parse(uriString))
                             .build()
                     )
                 } ?: tempat.gambarResId?.let {
-                    // Jika ada Resource ID (data Statis), gunakan painterResource
                     painterResource(id = it)
-                } ?: painterResource(id = defaultImage), // Jika tidak ada keduanya, gunakan default image
+                } ?: painterResource(id = defaultImage),
                 contentDescription = tempat.nama,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -506,9 +557,8 @@ fun TempatItemEditable(
                 ) {
                     DropdownMenuItem(onClick = {
                         expanded = false
-                        // Hanya hapus jika item bukan data statis (yang tidak punya nama di Firestore)
-                        if (tempat.gambarResId == null) {
-                            // Hapus dokumen dari Firestore berdasarkan nama
+                        // Hanya hapus dari Firestore jika item BUKAN data statis (yang tidak punya URI String)
+                        if (tempat.gambarUriString != null) {
                             firestore.collection("tempat_wisata").document(tempat.nama)
                                 .delete()
                                 .addOnSuccessListener {
@@ -518,9 +568,7 @@ fun TempatItemEditable(
                                     Log.w("TempatItemEditable", "Error deleting document", e)
                                 }
                         } else {
-                            // Jika data statis (hanya dari resource), tidak bisa dihapus dari Firestore.
-                            // Anda bisa menambahkan logika untuk menghapus dari daftar lokal saja di sini,
-                            // tetapi untuk menyederhanakan dan mengikuti flow modul, kita abaikan penghapusan statis.
+                            // Untuk data statis (ResId), cukup refresh untuk menghilangkannya dari tampilan sementara
                             onDelete()
                         }
                     }) {
@@ -532,7 +580,7 @@ fun TempatItemEditable(
     }
 }
 
-// --- Composable: Dialog Tambah Tempat Wisata (Tidak Berubah) ---
+// --- Composable: Dialog Tambah Tempat Wisata ---
 @Composable
 fun TambahTempatWisataDialog(
     firestore: FirebaseFirestore,
@@ -603,7 +651,6 @@ fun TambahTempatWisataDialog(
 
                         coroutineScope.launch {
                             try {
-                                // Menggunakan nama sebagai Document ID
                                 firestore.collection("tempat_wisata").document(nama)
                                     .set(tempatWisata)
                                     .await()
