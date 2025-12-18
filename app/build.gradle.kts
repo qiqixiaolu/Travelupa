@@ -4,6 +4,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 
     id("com.google.gms.google-services")
+
+    kotlin("kapt")
 }
 
 android {
@@ -92,4 +94,9 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore-ktx")
 
     implementation("androidx.compose.material:material-icons-extended:1.6.8")
+
+    // Room
+    implementation("androidx.room:room-runtime:2.5.0")
+    kapt("androidx.room:room-compiler:2.5.0")
+    implementation("androidx.room:room-ktx:2.5.0")
 }

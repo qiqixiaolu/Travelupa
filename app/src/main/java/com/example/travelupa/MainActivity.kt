@@ -1,5 +1,6 @@
 package com.example.travelupa
 
+import ImageEntity
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -50,11 +51,84 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
+import androidx.room.Room
+import kotlinx.coroutines.CoroutineScope
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.IOException
 
 
-// --- SEALEAD CLASS NAVIGASI (DITAMBAH GREETING) ---
+// --- Helper Functions Room & Storage ---
+
+// Simpan gambar secara lokal dan kembalikan path absolutnya
+fun saveImageLocally(context: Context, uri: Uri): String {
+    try {
+        val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+        val file = File(context.filesDir, "image_${System.currentTimeMillis()}.jpg")
+
+        inputStream?.use { input ->
+            file.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        Log.d("ImageSave", "Image saved successfully to: ${file.absolutePath}")
+        return file.absolutePath
+    } catch (e: Exception) {
+        Log.e("ImageSave", "Error saving image", e)
+        throw e
+    }
+}
+
+// Upload data ke Room dan Firestore
+fun uploadImageToFirestore(
+    firestore: FirebaseFirestore,
+    context: Context,
+    imageUri: Uri,
+    tempatWisata: TempatWisata,
+    onSuccess: (TempatWisata) -> Unit,
+    onFailure: (Exception) -> Unit
+) {
+    // Inisialisasi Room Database
+    val db = Room.databaseBuilder(
+        context,
+        AppDatabase::class.java, "travelupa-database"
+    ).build()
+    val imageDao = db.imageDao()
+
+    // Simpan gambar ke penyimpanan lokal
+    val localPath = saveImageLocally(context, imageUri)
+
+    // Lakukan operasi DB/Firestore di Coroutine Scope I/O
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            // Insert path gambar ke Room DB
+            val imageId = imageDao.insert(ImageEntity(localPath = localPath))
+
+            // Update object TempatWisata dengan path lokal
+            val updatedTempatWisata = tempatWisata.copy(gambarUriString = localPath)
+
+            // Upload data teks + path lokal ke Firestore
+            firestore.collection("tempat_wisata")
+                .document(updatedTempatWisata.nama) // Menggunakan nama sebagai Document ID
+                .set(updatedTempatWisata)
+                .await()
+
+            withContext(Dispatchers.Main) {
+                onSuccess(updatedTempatWisata)
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                onFailure(e)
+            }
+        }
+    }
+}
+
+
+// --- SEALEAD CLASS NAVIGASI ---
 sealed class Screen(val route: String) {
-    object Greeting : Screen("greeting") // Rute baru
+    object Greeting : Screen("greeting")
     object Login : Screen("login")
     object Register : Screen("register")
     object RekomendasiTempat : Screen("rekomendasi_tempat")
@@ -82,7 +156,7 @@ val daftarTempatWisataStatis = listOf(
     )
 )
 
-// --- Composable: Greeting Screen (BARU) ---
+// --- Composable: Greeting Screen ---
 @Composable
 fun GreetingScreen(
     onStart: () -> Unit
@@ -109,7 +183,7 @@ fun GreetingScreen(
             )
         }
         Button(
-            onClick = onStart, // Memicu navigasi ke Login
+            onClick = onStart,
             modifier = Modifier
                 .width(360.dp)
                 .align(Alignment.BottomCenter)
@@ -121,28 +195,25 @@ fun GreetingScreen(
 }
 
 
-// --- Composable: App Navigation (UPDATE startDestination dan Greeting) ---
+// --- Composable: App Navigation ---
 @Composable
 fun AppNavigation(currentUser: FirebaseUser?) {
     val navController = rememberNavController()
 
     NavHost(
         navController = navController,
-        startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Greeting.route // Perubahan di sini
+        startDestination = if (currentUser != null) Screen.RekomendasiTempat.route else Screen.Greeting.route
     ) {
-        // Rute: Greeting Screen
         composable(Screen.Greeting.route) {
             GreetingScreen(
                 onStart = {
                     navController.navigate(Screen.Login.route) {
-                        // Hapus Greeting dari back stack
                         popUpTo(Screen.Greeting.route) { inclusive = true }
                     }
                 }
             )
         }
 
-        // Rute: Login Screen
         composable(Screen.Login.route) {
             LoginScreen(
                 onLoginSuccess = {
@@ -156,7 +227,6 @@ fun AppNavigation(currentUser: FirebaseUser?) {
             )
         }
 
-        // Rute: Register Screen
         composable(Screen.Register.route) {
             RegisterScreen(
                 onRegisterSuccess = {
@@ -170,19 +240,11 @@ fun AppNavigation(currentUser: FirebaseUser?) {
             )
         }
 
-        // Rute: Rekomendasi Tempat Screen
         composable(Screen.RekomendasiTempat.route) {
             RekomendasiTempatScreen(
                 onBackToLogin = {
                     FirebaseAuth.getInstance().signOut()
                     navController.navigate(Screen.Login.route) {
-                        // Perubahan: Kembali ke Login, bukan Greeting (Bab 7 module menyarankan kembali ke Greeting)
-                        // Mengikuti flow umum:
-                        // navController.navigate(Screen.Greeting.route) {
-                        // popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
-                        // }
-
-                        // Mengikuti flow kode Anda sebelumnya (kembali ke Login)
                         popUpTo(Screen.RekomendasiTempat.route) { inclusive = true }
                     }
                 }
@@ -212,7 +274,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// --- Composable: Register Screen (Tidak Berubah) ---
+// --- Composable: Register Screen ---
 @Composable
 fun RegisterScreen(
     onRegisterSuccess: () -> Unit,
@@ -315,7 +377,7 @@ fun RegisterScreen(
     }
 }
 
-// --- Composable: Login Screen (Tidak Berubah) ---
+// --- Composable: Login Screen ---
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit,
@@ -422,6 +484,7 @@ fun RekomendasiTempatScreen(
     val firestore = FirebaseFirestore.getInstance()
     val context = LocalContext.current
 
+    // Data gabungan: Statis + Firestore (menghilangkan duplikasi)
     val daftarTempatWisataGabungan = remember(daftarTempatWisataFirestore) {
         val firestoreNames = daftarTempatWisataFirestore.map { it.nama }.toSet()
         val uniqueStatis = daftarTempatWisataStatis.filter { it.nama !in firestoreNames }
@@ -557,7 +620,6 @@ fun TempatItemEditable(
                 ) {
                     DropdownMenuItem(onClick = {
                         expanded = false
-                        // Hanya hapus dari Firestore jika item BUKAN data statis (yang tidak punya URI String)
                         if (tempat.gambarUriString != null) {
                             firestore.collection("tempat_wisata").document(tempat.nama)
                                 .delete()
@@ -568,7 +630,6 @@ fun TempatItemEditable(
                                     Log.w("TempatItemEditable", "Error deleting document", e)
                                 }
                         } else {
-                            // Untuk data statis (ResId), cukup refresh untuk menghilangkannya dari tampilan sementara
                             onDelete()
                         }
                     }) {
@@ -647,21 +708,25 @@ fun TambahTempatWisataDialog(
                 onClick = {
                     if (nama.isNotBlank() && deskripsi.isNotBlank() && gambarUri != null) {
                         isUploading = true
-                        val tempatWisata = TempatWisata(nama, deskripsi, gambarUriString = gambarUri.toString())
+                        val tempatWisata = TempatWisata(nama, deskripsi) // Tanpa URI/ResId awal
 
-                        coroutineScope.launch {
-                            try {
-                                firestore.collection("tempat_wisata").document(nama)
-                                    .set(tempatWisata)
-                                    .await()
-
+                        // Panggil fungsi yang mengurus penyimpanan lokal Room dan upload Firestore
+                        uploadImageToFirestore(
+                            firestore,
+                            context,
+                            gambarUri!!,
+                            tempatWisata,
+                            onSuccess = { uploadedTempat ->
                                 isUploading = false
-                                onTambah(nama, deskripsi, gambarUri.toString())
-                            } catch (e: Exception) {
+                                onTambah(nama, deskripsi, uploadedTempat.gambarUriString)
+                                onDismiss()
+                            },
+                            onFailure = { e ->
                                 isUploading = false
-                                Log.e("Firestore", "Error adding document", e)
+                                Log.e("Upload", "Upload failed", e)
+                                onDismiss()
                             }
-                        }
+                        )
                     }
                 },
                 enabled = !isUploading
